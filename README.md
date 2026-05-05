@@ -21,21 +21,31 @@ Each skill is self-contained inside its own folder (`SKILL.md` + `scripts/` + a 
 
 Clone the repo anywhere, then install one or more skills into your Claude Code skills directory (`~/.claude/skills/`).
 
-### Install everything
+### 1. Clone the repo
 
 ```bash
 git clone https://github.com/camilo-acevedo/claude-skills.git
 cd claude-skills
-./install/install.sh                 # macOS / Linux
 ```
 
 ```powershell
 git clone https://github.com/camilo-acevedo/claude-skills.git
 cd claude-skills
+```
+
+### 2. Run the install script
+
+Install **every** available skill:
+
+```bash
+./install/install.sh                 # macOS / Linux
+```
+
+```powershell
 .\install\install.ps1                # Windows
 ```
 
-### Install a specific skill
+Or install a **single** skill (e.g. `codemap`):
 
 ```bash
 ./install/install.sh codemap
@@ -45,11 +55,49 @@ cd claude-skills
 .\install\install.ps1 codemap
 ```
 
-Re-running the script updates an existing installation in place. Pass `--symlink` (Unix) or `-Symlink` (Windows) to symlink instead of copying so future `git pull` updates propagate automatically.
+The script copies the skill folder into `~/.claude/skills/<skill-name>/`. Re-running it updates an existing installation in place.
+
+### 3. Verify
+
+Open a **new** Claude Code session (skills are discovered at session start, so any session that was already open won't see the skill yet) and type:
+
+```
+/codemap
+```
+
+Claude should run the generator and write `CODEMAP.md` to your repo root.
+
+### Updating after a `git pull`
+
+```bash
+cd path/to/claude-skills
+git pull
+./install/install.sh codemap         # macOS / Linux
+```
+
+```powershell
+cd path\to\claude-skills
+git pull
+.\install\install.ps1 codemap        # Windows
+```
+
+### Optional: install via symlink (auto-updates on `git pull`)
+
+Pass `--symlink` (Unix) or `-Symlink` (Windows) so the installed skill points back to the cloned repo and changes propagate without re-running the install script.
+
+```bash
+./install/install.sh codemap --symlink
+```
+
+```powershell
+.\install\install.ps1 codemap -Symlink
+```
+
+> **Windows note:** creating symlinks requires either an Administrator shell or **Developer Mode** enabled (`Settings → System → For developers → Developer Mode = On`). If you don't enable it, the script will fail — fall back to the regular copy install.
 
 ### Manual install (no scripts)
 
-Copy or symlink any skill folder into `~/.claude/skills/`:
+Just copy any skill folder into `~/.claude/skills/`:
 
 ```bash
 cp -r codemap ~/.claude/skills/codemap
@@ -58,16 +106,6 @@ cp -r codemap ~/.claude/skills/codemap
 ```powershell
 Copy-Item -Recurse codemap $env:USERPROFILE\.claude\skills\codemap
 ```
-
-## Verifying the install
-
-Open a Claude Code session and ask:
-
-```
-/codemap
-```
-
-Claude should pick up the skill and run the generator.
 
 ## Uninstall
 
