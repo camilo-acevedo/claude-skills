@@ -24,13 +24,13 @@ Clone the repo anywhere, then install one or more skills into your Claude Code s
 ### Install everything
 
 ```bash
-git clone https://github.com/<your-user>/claude-skills.git
+git clone https://github.com/camilo-acevedo/claude-skills.git
 cd claude-skills
 ./install/install.sh                 # macOS / Linux
 ```
 
 ```powershell
-git clone https://github.com/<your-user>/claude-skills.git
+git clone https://github.com/camilo-acevedo/claude-skills.git
 cd claude-skills
 .\install\install.ps1                # Windows
 ```
