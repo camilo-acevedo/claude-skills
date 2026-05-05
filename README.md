@@ -6,9 +6,16 @@ A collection of [Claude Code](https://docs.claude.com/en/docs/claude-code) skill
 
 | Skill | Status | What it does |
 |-------|--------|--------------|
-| [codemap](codemap/) | ✅ available | Generates a single `CODEMAP.md` (file tree + per-file purpose + exported symbols) so Claude reads one map instead of doing 20+ Glob/Grep/Read calls. |
-| [file-summary](file-summary/) | 🚧 planned | Caches per-file summaries (purpose, exports, key line ranges) under `.claude/summaries/` so repeated reads of large files cost ~200 tokens instead of 2000+. |
-| [run-quiet](run-quiet/) | 🚧 planned | Wraps verbose commands (`pytest`, `npm run build`, `terraform plan`) — runs them, saves the full output to a log, returns only exit code + relevant lines. |
+| [codemap](codemap/) | ✅ available | One `CODEMAP.md` (tree + per-file purpose + exported symbols) so Claude reads one map instead of doing 20+ Glob/Grep/Read calls. |
+| [run-quiet](run-quiet/) | 🚧 planned | Wraps verbose commands (`pytest`, `npm run build`, `terraform plan`); returns exit code + relevant lines, full output saved to a log. |
+| [git-digest](git-digest/) | 🚧 planned | Bundles `git status` + `log` + `diff --stat` + `branch -vv` into a single digested report. 4–5 calls collapse into 1. |
+| [test-failures-only](test-failures-only/) | 🚧 planned | Runs the test suite and returns only failures with condensed tracebacks; if all green, returns one line. |
+| [file-summary](file-summary/) | 🚧 planned | Per-file summary cache under `.claude/summaries/`. Repeated reads of large files cost ~200 tokens instead of 2000+. |
+| [diff-summary](diff-summary/) | 🚧 planned | Categorized summary of large diffs for PR review (top files, categories, sample hunks + path to full diff). |
+| [log-extract](log-extract/) | 🚧 planned | Extracts errors + N lines of context from large log files; deduplicates repeated stack traces. |
+| [api-contract](api-contract/) | 🚧 planned | Distills OpenAPI / GraphQL specs into a compact `CONTRACT.md` (endpoints, methods, key types). |
+| [session-handoff](session-handoff/) | 🚧 planned | `/save-context` + `/resume-context` to persist task state across sessions on your terms. |
+| [answer-cache](answer-cache/) | 🚧 planned | Caches Q&A about the codebase under `.claude/answers/` with file-based invalidation. |
 
 Each skill is self-contained inside its own folder (`SKILL.md` + `scripts/` + a folder-level `README.md`).
 
