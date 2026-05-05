@@ -15,7 +15,7 @@ A collection of [Claude Code](https://docs.claude.com/en/docs/claude-code) skill
 | [log-extract](log-extract/) | ✅ available | Extracts errors + N lines of context from large log files; deduplicates repeated stack traces. |
 | [api-contract](api-contract/) | ✅ available | Distills OpenAPI 3.x specs into a compact `CONTRACT.md` (endpoints, methods, key types, auth). |
 | [session-handoff](session-handoff/) | ✅ available | `save` / `list` / `resume` subcommands to persist task state across sessions in `.claude/handoff/`. |
-| [answer-cache](answer-cache/) | 🚧 planned | Caches Q&A about the codebase under `.claude/answers/` with file-based invalidation. |
+| [answer-cache](answer-cache/) | ✅ available | Caches Q&A about the codebase under `.claude/answers/` with file-based invalidation. |
 
 Each skill is self-contained inside its own folder (`SKILL.md` + `scripts/` + a folder-level `README.md`).
 
