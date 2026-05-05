@@ -12,7 +12,7 @@ A collection of [Claude Code](https://docs.claude.com/en/docs/claude-code) skill
 | [test-failures-only](test-failures-only/) | ✅ available | Runs the test suite and returns only failures with condensed tracebacks; if all green, returns one line. |
 | [file-summary](file-summary/) | 🚧 planned | Per-file summary cache under `.claude/summaries/`. Repeated reads of large files cost ~200 tokens instead of 2000+. |
 | [diff-summary](diff-summary/) | ✅ available | Categorized summary of large diffs for PR review (top files, categories, sample hunks + path to full diff). |
-| [log-extract](log-extract/) | 🚧 planned | Extracts errors + N lines of context from large log files; deduplicates repeated stack traces. |
+| [log-extract](log-extract/) | ✅ available | Extracts errors + N lines of context from large log files; deduplicates repeated stack traces. |
 | [api-contract](api-contract/) | 🚧 planned | Distills OpenAPI / GraphQL specs into a compact `CONTRACT.md` (endpoints, methods, key types). |
 | [session-handoff](session-handoff/) | 🚧 planned | `/save-context` + `/resume-context` to persist task state across sessions on your terms. |
 | [answer-cache](answer-cache/) | 🚧 planned | Caches Q&A about the codebase under `.claude/answers/` with file-based invalidation. |
