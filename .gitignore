@@ -13,6 +13,8 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Local tool state (Claude Code per-project data, codemap cache, etc.)
+.claude/
+
 # Local artifacts produced by the skill itself when run on this repo
 CODEMAP.md
-.claude/codemap-cache.json
