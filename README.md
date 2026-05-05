@@ -7,7 +7,7 @@ A collection of [Claude Code](https://docs.claude.com/en/docs/claude-code) skill
 | Skill | Status | What it does |
 |-------|--------|--------------|
 | [codemap](codemap/) | ✅ available | One `CODEMAP.md` (tree + per-file purpose + exported symbols) so Claude reads one map instead of doing 20+ Glob/Grep/Read calls. |
-| [run-quiet](run-quiet/) | 🚧 planned | Wraps verbose commands (`pytest`, `npm run build`, `terraform plan`); returns exit code + relevant lines, full output saved to a log. |
+| [run-quiet](run-quiet/) | ✅ available | Wraps verbose commands (`pytest`, `npm run build`, `terraform plan`); returns exit code + relevant lines, full output saved to a log. |
 | [git-digest](git-digest/) | ✅ available | Bundles `git status` + `log` + `diff --stat` + `branch -vv` + `stash list` into a single digested report. 4–5 calls collapse into 1. |
 | [test-failures-only](test-failures-only/) | 🚧 planned | Runs the test suite and returns only failures with condensed tracebacks; if all green, returns one line. |
 | [file-summary](file-summary/) | 🚧 planned | Per-file summary cache under `.claude/summaries/`. Repeated reads of large files cost ~200 tokens instead of 2000+. |
