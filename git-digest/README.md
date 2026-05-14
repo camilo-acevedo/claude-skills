@@ -14,12 +14,16 @@ A single invocation returns:
 
 If the working tree is clean and the branch is in sync with its upstream, the digest collapses to a single line.
 
-> **Estimated savings:** 4–5 git tool calls collapse into 1. Typical session saves ~60% of the tokens spent on git state exploration.
+> **Estimated savings:** 4–5 separate git tool calls collapse into 2 parallel batches with a single rendered output. Typical session saves ~60% of the tokens spent on git state exploration.
+
+## How it works
+
+This skill is **100% Markdown — no Python, no external scripts**. The [`SKILL.md`](SKILL.md) lists the exact `git` commands Claude should run (in parallel where possible) and the layout of the final digest. Claude executes the commands via its built-in Bash tool and renders the result.
 
 ## Requirements
 
-- Python 3.8+ (standard library only — no third-party packages).
 - `git` available on `PATH`.
+- That's it — no Python, no Node, no other runtimes.
 
 ## Installation
 
@@ -41,21 +45,13 @@ Inside any Claude Code session:
 /git-digest
 ```
 
-You can also run the script directly:
+You can also nudge it with extra hints, e.g.:
 
-```bash
-python ~/.claude/skills/git-digest/scripts/digest.py
+```
+/git-digest against=origin/main commits=10
 ```
 
-### Flags
-
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `--root <path>` | `.` | Repo to inspect (walks up to find `.git`). |
-| `--commits N` | `5` | Number of recent commits to list. |
-| `--against <ref>` | upstream (or `HEAD~10`) | Ref to diff against in the diffstat section. |
-| `--no-diff` | off | Skip the diffstat section entirely (faster on huge ranges). |
-| `--quiet` | off | Suppress trailing performance hints. |
+These are read by Claude as natural-language arguments — there's no rigid CLI flag parser.
 
 ## Output example
 
@@ -64,7 +60,7 @@ python ~/.claude/skills/git-digest/scripts/digest.py
 
 ## Branch
 - Current: feature/auth-rewrite
-- Tracking: origin/feature/auth-rewrite (ahead 2, in sync)
+- Tracking: origin/feature/auth-rewrite (ahead 2)
 - Default: main
 
 ## Working tree (1 staged, 3 modified, 1 untracked)
@@ -77,7 +73,7 @@ A  tests/test_users.py
 
 ## Recent commits (last 5)
 - abc1234 (2 hours ago) feat: add user create endpoint — Camilo
-- def5678 (1 day ago) refactor: extract validation       — Camilo
+- def5678 (1 day ago) refactor: extract validation — Camilo
 …
 
 ## Diff vs origin/main
@@ -103,7 +99,7 @@ clean working tree on `main`, up to date with `origin/main`.
 ## Limitations
 
 - Detached HEAD: reported but no upstream comparison.
-- Submodules: not inspected (a future flag could add `--recurse-submodules`).
+- Submodules: not inspected.
 - Worktrees: only the active worktree is inspected.
 
 ## License

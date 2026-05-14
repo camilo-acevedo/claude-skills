@@ -13,10 +13,14 @@ Claude reads the contract once instead of paging through a multi-MB spec file.
 
 > **Estimated savings:** 95%+ in projects with large specs (where the raw schema is several MB).
 
+## How it works
+
+This skill is **100% Markdown — no Python, no external scripts**. The [`SKILL.md`](SKILL.md) tells Claude how to read the spec (directly for small files, section-by-section with `grep` + `Read` offsets for large ones), parse it in-context, and render `CONTRACT.md`.
+
 ## Requirements
 
-- Python 3.8+ (standard library only for JSON specs).
-- `pyyaml` if you want to feed YAML specs (`pip install pyyaml`). JSON-only otherwise.
+- A POSIX shell with `grep` and `wc` (Claude Code's built-in Bash tool on all platforms).
+- That's it — no Python, no YAML library, no JSON parser, no other runtimes.
 
 ## Installation
 
@@ -36,60 +40,56 @@ Inside any Claude Code session:
 
 ```
 /api-contract docs/openapi.json
+/api-contract api/swagger.yaml output=CONTRACT.md
+/api-contract spec.json tag=users
 ```
 
-Or run the script directly:
+These are free-form arguments — Claude reads them as natural language.
 
-```bash
-python ~/.claude/skills/api-contract/scripts/distill.py docs/openapi.json
-python ~/.claude/skills/api-contract/scripts/distill.py spec.yaml --output CONTRACT.md
-python ~/.claude/skills/api-contract/scripts/distill.py spec.json --tag users
-```
+### Supported arguments
 
-### Flags
-
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `path` (positional) | required | Path to OpenAPI 3.x spec (`.json`, `.yaml`, `.yml`). |
-| `--output <path>` | stdout | Write the contract to a file. |
-| `--tag <name>` | none | Filter endpoints whose tag contains this (case-insensitive). |
-| `--max-schemas N` | `40` | Cap on schemas in the Schemas section. |
-| `--no-schemas` | off | Skip the Schemas section. |
+| Argument | Default | Purpose |
+|----------|---------|---------|
+| `path` (first positional) | required | Path to OpenAPI 3.x spec (`.json`, `.yaml`, `.yml`). |
+| `output=<path>` | `CONTRACT.md` at repo root | Where to write the distilled contract. |
+| `tag=<name>` | none | Filter endpoints whose tag contains this (case-insensitive). |
+| `maxschemas=N` | `40` | Cap on schemas in the Schemas section. |
+| `noschemas=true` | off | Skip the Schemas section. |
 
 ## Output example
 
 ```markdown
-# API contract — petstore (1.0.0)
+# API contract — petstore (v1.0.0)
 
-## Servers
-- https://api.petstore.example  — Production
+Servers: https://api.petstore.example
+Base URL: /v1
 
 ## Auth
-- bearerJwt: http  (bearer, format=JWT)
-- apiKey: apiKey  (in=header, name=X-API-Key)
+- bearerJwt (http, bearer, JWT)
+- apiKey (apiKey, header: X-API-Key)
 
 ## Endpoints (12)
 
 ### users
-- `GET    /users`  — List users
-- `POST   /users`  — Create user  _(body: CreateUserDTO; → 201 User)_
-- `GET    /users/{id}`  — Get user  _(→ 200 User)_
+- GET    /users               — List users
+- POST   /users               — Create user            (body: CreateUserDTO → 201 User)
+- GET    /users/{id}          — Get user               (→ 200 User)
 
 ### pets
-- `GET    /pets`  — List pets  _(query: limit, offset)_
-- `POST   /pets`  — Create pet  _(body: CreatePet; → 201 Pet)_
+- GET    /pets                — List pets              (query: limit, offset)
+- POST   /pets                — Create pet             (body: CreatePet → 201 Pet)
 
 ## Schemas (24)
-- `User`  { id: integer, email: string, role: enum(admin, user) }
-- `Pet`  { id: integer, name: string (required), owner_id: integer }
-- `CreatePet`  { name: string (required), owner_id: integer }
+- User              { id: int, email: string, role: enum(admin, user) }
+- Pet               { id: int, name: string (required), owner_id: int }
+- CreatePet         { name: string (required), owner_id: int }
 ```
 
 ## Limitations
 
-- v1 supports OpenAPI 3.x. Swagger 2.0 specs partially work (the script falls back to `definitions` if `components.schemas` is missing).
-- GraphQL SDL is not supported (planned for a future version).
-- Deeply nested schemas show only their top-level shape; `$ref` names are preserved so you can drill down by reading the spec section.
+- v1 supports OpenAPI 3.x. Swagger 2.0 specs partially work (the recipe falls back to `definitions` if `components.schemas` is missing).
+- GraphQL SDL is not supported.
+- Deeply nested schemas show only their top-level shape; schema names are preserved so you can drill down by reading the spec section directly.
 
 ## License
 

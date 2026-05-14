@@ -10,6 +10,10 @@ description: |
 
 # api-contract
 
+A **Markdown-only** skill — no Python, no scripts. You (Claude) read the
+OpenAPI spec with the Read tool (or extract sections via `grep` when the
+spec is too large), parse it in-context, and write `CONTRACT.md`.
+
 ## When to invoke
 
 Invoke `api-contract` when ANY of these apply:
@@ -26,74 +30,120 @@ Do NOT invoke when:
 - The user wants details of a specific endpoint already in context.
 - The input is GraphQL SDL — only OpenAPI is supported in v1.
 
-## How to invoke
+## How to run
+
+### Step 1 — measure the spec
 
 ```bash
-python <skill-dir>/scripts/distill.py <path/to/openapi.json|.yaml> [flags]
+wc -l "<path>"
 ```
 
-`<skill-dir>` is typically `~/.claude/skills/api-contract/`.
+- If under ~1500 lines: use the Read tool to read the whole file.
+- Otherwise: use `grep` + Read with offsets to extract only the sections
+  you need (see Step 2 below).
 
-Examples:
+### Step 2 — extract the sections you need
+
+For both JSON and YAML specs, you only need four top-level sections:
+
+| Section | YAML key | JSON key |
+|---------|----------|----------|
+| Metadata | `info:` | `"info":` |
+| Servers | `servers:` | `"servers":` |
+| Endpoints | `paths:` | `"paths":` |
+| Schemas | `components.schemas:` or `definitions:` (Swagger 2) | `"components"."schemas"` or `"definitions"` |
+| Auth | `components.securitySchemes:` or `securityDefinitions:` (Swagger 2) | same |
+
+For huge specs, locate the line ranges of these sections with:
 
 ```bash
-python <skill-dir>/scripts/distill.py docs/openapi.json
-python <skill-dir>/scripts/distill.py api/swagger.yaml --output CONTRACT.md
-python <skill-dir>/scripts/distill.py spec.json --tag users
+grep -nE '^(info|servers|paths|components|definitions|securityDefinitions):' "<path>"
 ```
 
-## Flags
+(JSON: look for top-level keys at indent 2 — `grep -nE '^\s{2}"(info|servers|paths|components|definitions)"\s*:' "<path>"`.)
 
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `path` (positional) | required | Path to an OpenAPI 3.x JSON or YAML spec. |
-| `--output <path>` | stdout | Write the contract to a file instead of stdout. |
-| `--tag <name>` | none | Filter endpoints whose tag matches (substring, case-insensitive). |
-| `--max-schemas N` | `40` | Cap on schemas shown in the Schemas section. |
-| `--no-schemas` | off | Skip the Schemas section entirely. |
-| `--quiet` | off | Suppress trailing performance hints. |
+Then use the Read tool with `offset` and `limit` to read each section
+individually.
 
-YAML support requires the `pyyaml` package. JSON specs need no extra deps.
+### Step 3 — parse and summarize
 
-## What you get back
+#### Endpoints
+
+For each path in `paths`:
+- For each HTTP method (`get`, `post`, `put`, `patch`, `delete`, `head`, `options`):
+  - Extract `summary` (first line) or `description` (first sentence) as the
+    one-line description.
+  - Extract `tags` (first tag is used for grouping).
+  - Extract request body schema name if present (`requestBody.content.*.schema.$ref` →
+    last segment after `/`).
+  - Extract `parameters` of type `query` (list the names, comma-separated).
+  - Extract success response status + schema name if present
+    (`responses.2xx.content.*.schema.$ref` → last segment).
+
+Group endpoints by tag (or `(untagged)`).
+
+#### Schemas
+
+For each entry in `components.schemas` (or `definitions`):
+- If `type: object` with `properties`, summarize as
+  `{ key1: <type>, key2: <type>, … }`. Mark required keys with `(required)`.
+- If `type: array`, summarize as `<item-type>[]`.
+- If `enum`, summarize as `enum (<comma-list>)`.
+- If `$ref` only, summarize as `→ <target>`.
+- Cap at the first ~5 keys; append `…` if more.
+
+#### Auth
+
+For each entry in `securitySchemes`:
+- Print `<name>` + `<type>` + key transport (header / query / cookie) +
+  scheme/format if relevant.
+
+### Step 4 — render `CONTRACT.md`
 
 ```markdown
-# API contract — petstore (v1.0.0)
+# API contract — <title> (v<version>)
 
-Servers: https://api.petstore.example
-Base URL: /v1
+Servers: <comma-list of server URLs>
+Base URL: <basePath if Swagger 2, else first server.url path>
 
 ## Auth
-- bearer (JWT, header: Authorization)
-- apiKey (header: X-API-Key)
+- <name> (<type>, header: <Authorization|X-API-Key|…>)
+- …
 
-## Endpoints (12)
+## Endpoints (<total>)
 
-### users
-- GET    /users                 — List users
-- POST   /users                 — Create user            (body: CreateUserDTO)
-- GET    /users/{id}            — Get user
-- PATCH  /users/{id}            — Update user            (body: UpdatePartial)
-- DELETE /users/{id}            — Delete user
+### <tag>
+- <METHOD> <path>            — <one-line summary>             (<body: SchemaName, query: a, b, → 200 ResponseSchema>)
+- …
 
-### pets
-- GET    /pets                  — List pets              (query: limit, offset)
-- POST   /pets                  — Create pet             (body: CreatePet → 201 Pet)
-…
+(Repeat per tag, alphabetized.)
 
-## Schemas (24)
-- User              { id: int, email: str, role: enum }
-- Pet               { id: int, name: str, owner_id: int }
-- CreatePet         { name: str (required), owner_id: int }
-…
+## Schemas (<total>)
+- <Name>            <inlined shape>
+- …
 ```
+
+By default, write to `<repo-root>/CONTRACT.md` (use `output=<path>` to
+override). If the file already exists, overwrite it.
+
+## Supported arguments
+
+| Argument | Default | Purpose |
+|----------|---------|---------|
+| `path` (first positional) | required | Path to an OpenAPI 3.x JSON or YAML spec. |
+| `output=<path>` | `CONTRACT.md` at repo root | Where to write the distilled contract. |
+| `tag=<name>` | none | Filter endpoints whose tag contains `<name>` (case-insensitive). |
+| `maxschemas=N` | `40` | Cap on schemas in the Schemas section. |
+| `noschemas=true` | off | Skip the Schemas section entirely. |
 
 ## Notes
 
-- v1 is OpenAPI 3.x only. Swagger 2.0 specs may load but field paths differ
-  (the script tries both `paths`+`components` and `paths`+`definitions`).
-- Schemas are summarized to one line each: object key types are inlined,
-  required fields are marked `(required)`. For deeply nested schemas only
-  the top-level shape is shown.
-- For specs > 5 MB the script may take a few seconds; the result is small
-  and cacheable in your project (write to `CONTRACT.md` and commit it).
+- v1 supports OpenAPI 3.x and Swagger 2.0 (the section keys differ, but the
+  shapes are similar enough). GraphQL SDL is out of scope.
+- For YAML specs, you read them with the Read tool the same as JSON — no
+  parser library is needed because YAML keys are line-oriented and shallow
+  enough for visual parsing.
+- Schemas with deep nesting are summarized to top-level shape only. Drill
+  into the spec directly when you need full detail on one.
+- The result is small and stable — commit `CONTRACT.md` to the repo so
+  future sessions skip the distill step.

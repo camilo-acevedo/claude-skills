@@ -6,35 +6,45 @@ A [Claude Code](https://docs.claude.com/en/docs/claude-code) skill that generate
 
 The map contains:
 
-- A filtered file tree (respects `.gitignore`, skips `node_modules`, `.venv`, build artifacts, etc.).
+- A filtered file tree (uses `git ls-files`, so it respects `.gitignore` and skips `node_modules`, `.venv`, build artifacts, etc. automatically).
 - A one-line purpose for each source file (from docstrings or leading comments).
-- Top-level exported symbols (functions, classes, public constants) with their signatures.
+- Top-level exported symbols (functions, classes, public constants) with their line numbers.
 
 Supports symbol extraction for **Python**, **TypeScript / JavaScript** (incl. `.tsx` / `.jsx`), and **Go**. Other source files appear in the tree only.
 
 > Token savings: in repos with 100+ files, replaces ~10–30 exploration tool calls per session with a single `Read CODEMAP.md`.
 
+## How it works
+
+This skill is **100% Markdown — no Python, no external scripts**. The [`SKILL.md`](SKILL.md) tells Claude how to enumerate files with `git ls-files` and extract per-language top-level symbols with parallel `grep` calls.
+
+### Trade-off vs the old Python parser
+
+The grep-based recipe is faster to install and works anywhere, but is **slightly less precise** than the old AST-based extractor:
+
+- Multi-line declarations may produce false positives/negatives.
+- Decorators changing visibility (`@private`) are not understood.
+- Re-exports through barrel files / dynamic exports may be missed.
+
+For navigation purposes this is fine — the map is a hint, not gospel. Fall back to `Grep` for the exact location of a symbol.
+
 ## Requirements
 
-- Python 3.8 or later. No third-party packages required (uses only the standard library).
-- [Claude Code](https://docs.claude.com/en/docs/claude-code) installed.
+- `git` available on `PATH` (used for `git ls-files`).
+- A POSIX shell with `grep` (Claude Code's built-in Bash tool on all platforms).
+- That's it — no Python, no Node, no other runtimes.
 
 ## Installation
 
 See the [top-level README](../README.md#installation) for install options.
 
-The shortest path:
-
 ```bash
-# from the repo root
-./install/install.sh codemap
+./install/install.sh codemap            # macOS / Linux
 ```
 
 ```powershell
-.\install\install.ps1 codemap
+.\install\install.ps1 codemap           # Windows
 ```
-
-Or copy the folder manually into `~/.claude/skills/codemap/`.
 
 ## Usage
 
@@ -42,66 +52,60 @@ Inside any Claude Code session:
 
 ```
 /codemap
+/codemap root=services/api
+/codemap includetests=true max=50
 ```
 
-Claude will run the generator, write `CODEMAP.md` to the repo root, and read it.
+Claude will enumerate files, extract symbols, write `CODEMAP.md` to the repo root, and read it.
 
-You can also run the generator manually:
+### Supported arguments
 
-```bash
-python ~/.claude/skills/codemap/scripts/generate.py
-```
-
-### Flags
-
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `--root <path>` | `.` | Index only a subtree (useful in monorepos). |
-| `--refresh` | off | Ignore cache, re-parse every file. |
-| `--max-symbols N` | `30` | Truncate per-file symbol lists. |
-| `--include-tests` | off | Put test files in the main tree instead of a separate section. |
-| `--output <path>` | `CODEMAP.md` | Write the map somewhere else. |
-| `--quiet` | off | Suppress stdout summary. |
+| Argument | Default | Purpose |
+|----------|---------|---------|
+| `root=<path>` | repo root | Index only a subtree (useful in monorepos). |
+| `max=N` | `30` | Cap per-file symbol lists. |
+| `includetests=true` | off | Put test files in the main `## Files` section instead of a separate group. |
 
 ## Output format
 
 ```markdown
-# Codemap — myproject
+# CODEMAP
 
-Generated: 2026-05-04T15:23:01Z
-Files indexed: 142  •  Languages: Python (89), TS (41), Go (12)
+_Generated: 2026-05-14T15:23:01Z_
 
 ## Tree
 
-src/
-├── api/
-│   ├── auth.py            — JWT validation + middleware
-│   ├── users.py           — CRUD endpoints for /users
-│   └── __init__.py        — router aggregation
-└── domain/
-    └── user.py            — User entity + value objects
+repo-name/
+├── src/
+│   ├── api/
+│   │   ├── auth.py
+│   │   ├── users.py
+│   │   └── __init__.py
+│   └── domain/
+│       └── user.py
+└── tests/
+    └── test_users.py
 
-## Symbols
+## Files
 
 ### src/api/auth.py
-- `def verify_jwt(token: str) -> Claims`
-- `class AuthMiddleware`
-- `JWT_ALGO: str`
+_JWT validation + middleware_
+- L12 `class AuthMiddleware:`
+- L34 `def verify_jwt(token):`
+- L60 `JWT_ALGORITHM = "HS256"`
+
+### src/api/users.py
+_CRUD endpoints for /users_
+- L8  `class UserCreate(BaseModel):`
+- L20 `def create_user(payload):`
 ```
-
-## Cache
-
-The first run parses every source file. Subsequent runs reuse cached entries for files whose `mtime` and `sha256` have not changed — typical re-generations on a 1000-file repo finish in well under a second.
-
-The cache lives at `<repo>/.claude/codemap-cache.json`. Delete it to force a full rebuild, or pass `--refresh`.
-
-Both `CODEMAP.md` and `.claude/codemap-cache.json` are derived artifacts — add them to your project's `.gitignore`.
 
 ## Limitations
 
-- TypeScript / JavaScript parsing uses regex (no full AST). Re-exports through barrel files and dynamic exports may be missed. A future version may switch to tree-sitter.
+- TypeScript / JavaScript parsing uses regex — re-exports through barrel files and dynamic exports may be missed.
 - Go parsing uses regex over `func` / `type` declarations; build tags are ignored.
-- Repos larger than 5000 files abort with a suggestion to use `--root <subdir>`.
+- Repos larger than 5000 files abort with a suggestion to use `root=<subdir>`.
+- No cache layer in the Markdown version — regen is a full rebuild every time. Parallel `grep` makes it fast.
 
 ## License
 

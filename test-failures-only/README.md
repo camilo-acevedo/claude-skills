@@ -8,10 +8,15 @@ Auto-detects **pytest**, **jest**, **vitest**, and **go test** from the command.
 
 > **Estimated savings:** a verbose 200-test suite output (~15K tokens) becomes a ~500-token digest. Clean runs collapse to one line.
 
+## How it works
+
+This skill is **100% Markdown — no Python, no external scripts**. The [`SKILL.md`](SKILL.md) lays out the framework-detection rules, the per-framework parsing recipes, and the output format. Claude runs the command with output redirected to a log, then parses it using `grep` + framework-specific knowledge.
+
 ## Requirements
 
-- Python 3.8+ (standard library only).
+- A POSIX shell or PowerShell (Claude Code's built-in Bash tool works on all platforms).
 - Whatever test runner you want to wrap.
+- No Python, no Node, no other runtimes.
 
 ## Installation
 
@@ -31,51 +36,46 @@ Inside any Claude Code session:
 
 ```
 /test-failures-only pytest -v
+/test-failures-only npx jest
+/test-failures-only go test ./...
+/test-failures-only framework=pytest -- python -m pytest tests/
 ```
 
-Or run the script directly. The test command goes after `--`:
+These are free-form arguments — Claude reads them as natural language. You can also just say "run the tests and only show me the failures".
 
-```bash
-python ~/.claude/skills/test-failures-only/scripts/run_tests.py -- pytest -v
-python ~/.claude/skills/test-failures-only/scripts/run_tests.py -- npx jest
-python ~/.claude/skills/test-failures-only/scripts/run_tests.py -- go test ./...
-```
+### Supported arguments
 
-### Flags
-
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `--root <path>` | cwd | Working directory; logs go under `<root>/.claude/test-logs/`. |
-| `--framework <name>` | auto | Force a parser (`pytest`, `jest`, `vitest`, `go`, `generic`). |
-| `--max-failures N` | `20` | Cap on failures shown. |
-| `--no-trace` | off | Show only failing test names, no traceback snippet. |
-| `--shell` | off | Run via the system shell. |
-| `--quiet` | off | Suppress the leading `$ <cmd>` line. |
+| Argument | Default | Purpose |
+|----------|---------|---------|
+| `root=<path>` | cwd | Working directory; logs under `<root>/.claude/test-logs/`. |
+| `framework=<name>` | auto | Force a parser (`pytest`, `jest`, `vitest`, `go`, `generic`). |
+| `max=N` | `20` | Cap on failures shown. |
+| `notrace=true` | off | Show only failing test names, no traceback snippet. |
 
 ## Auto-injected flags
 
-To keep output compact without forcing the user to remember runner-specific flags, the wrapper injects:
+To keep output compact without forcing the user to remember runner-specific flags, the skill injects:
 
-- `pytest` → adds `--tb=line` if no `--tb` was passed.
+- `pytest` → adds `--tb=line` if no `--tb` was passed; adds `-q` if no verbosity flag.
 - `go test` → adds `-json` so events can be parsed structurally.
 
-`jest` / `vitest` are not modified — pass `--reporters=json` yourself if you want JSON parsing instead of regex parsing.
+`jest` / `vitest` are not modified — they're quiet enough by default.
 
 ## Output examples
 
 **Clean pytest run:**
 
 ```
-$ pytest
-OK — 174 passed in 2.34s  •  log: .claude/test-logs/20260504-203000-pytest.log
+$ pytest -q
+OK — 174 passed in 2.34s  •  log: .claude/test-logs/20260514-203000-pytest.log
 ```
 
 **Failing pytest run:**
 
 ```
-$ pytest --tb=line
+$ pytest --tb=line -q
 FAIL — 3 failed, 174 passed in 4.21s
-log: .claude/test-logs/20260504-203012-pytest.log
+log: .claude/test-logs/20260514-203012-pytest.log
 
 ✗ tests/test_users.py::test_create
     AssertionError: expected 200, got 500
@@ -91,7 +91,7 @@ log: .claude/test-logs/20260504-203012-pytest.log
 
 ## Limitations
 
-- For jest/vitest the regex parser catches `FAIL ` / `●` / `×` markers; for cleaner detail, pass `--reporters=json`.
+- For jest/vitest the parser catches `●` markers; for cleaner detail, pass `--reporters=json` and Claude will parse it.
 - The `generic` parser is a coarse line filter — only use when no framework is detected.
 - Long tracebacks are truncated to the first non-empty lines per failure.
 

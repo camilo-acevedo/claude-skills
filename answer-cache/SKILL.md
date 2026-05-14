@@ -11,14 +11,19 @@ description: |
 
 # answer-cache
 
+A **Markdown-only** skill — no Python, no scripts. Each cache entry is a
+single Markdown file with YAML frontmatter under `<repo>/.claude/answers/`.
+Hashing uses `sha256sum` (Git Bash / Linux / macOS) or `Get-FileHash`
+(PowerShell).
+
 ## When to invoke
 
 Four operations:
 
 ### `ask`
-Invoke at the start of any "where is …?" / "how does … work?" / "what calls …?"
-question, **before** doing any Glob/Grep/Read of your own. If the cache has a
-fresh answer, you save the entire research roundtrip.
+Invoke at the start of any "where is …?" / "how does … work?" / "what calls
+…?" question, **before** doing any Glob/Grep/Read of your own. If the cache
+has a fresh answer, you save the entire research roundtrip.
 
 ### `save`
 Invoke immediately after you've answered a question via research. Pass the
@@ -30,88 +35,197 @@ Invoke when the user asks "what have we cached?" or to audit the cache.
 ### `forget`
 Invoke when the user says a cached answer is wrong, or to manually invalidate.
 
-## How to invoke
+## Where things live
 
-```bash
-python <skill-dir>/scripts/cache.py ask    "<question>"                                                   [--root .]
-python <skill-dir>/scripts/cache.py save   "<question>" --answer "<text>" --files a.py,b.py              [--root .]
-python <skill-dir>/scripts/cache.py list                                                                  [--root .] [--limit N]
-python <skill-dir>/scripts/cache.py forget "<question>"                                                  [--root .]
-```
+- Directory: `<repo-root>/.claude/answers/`
+- One entry per file: `<slug>-<qhash8>.md`
+  - `slug` = first ~40 chars of the kebab-cased normalized question.
+  - `qhash8` = first 8 hex chars of sha256 of the normalized question.
+- Optional convenience: `index.md` listing all entries (rebuild on save/forget).
 
-`<skill-dir>` is typically `~/.claude/skills/answer-cache/`.
+## Question normalization (use this for ALL lookups)
 
-For long answer bodies, pipe via stdin:
+To compute the normalized form:
 
-```bash
-python <skill-dir>/scripts/cache.py save "<question>" --from-stdin --files a.py,b.py < answer.md
-```
+1. Lowercase.
+2. Strip punctuation — replace every char outside `[a-z0-9\s]` with a space.
+3. Collapse runs of whitespace to a single space.
+4. Trim.
 
-## Behavior of `ask`
+Then `qhash8` = first 8 hex chars of `sha256(normalized)`.
 
-| Outcome | Exit code | What you should do |
-|---------|-----------|-------------------|
-| **hit (fresh)** | 0 | Use the printed answer, no further research. |
-| **stale** | 2 | Re-research; the printed answer is still shown for reference. After re-researching, call `save` with the same question to overwrite. |
-| **miss** | 1 | Research from scratch, then call `save`. |
-
-Staleness is detected by comparing each linked file's current sha256 against
-the one recorded at save time. New files matching the question are NOT detected
-automatically — that requires re-research.
-
-## Question matching
-
-v1 matches questions **exactly** after normalization:
-- lowercased
-- punctuation stripped
-- whitespace collapsed
-
-So `"Where is the auth middleware?"` and `"where is the auth middleware"`
-collide; but `"location of auth middleware"` does not. Keep wording stable
-for things you ask repeatedly.
-
-## What you get back
-
-`ask` (hit):
+## File layout (per entry)
 
 ```markdown
-# answer-cache: hit (saved 2026-05-04T18:00:00Z, 2 hours ago)
+---
+question: "<original question, verbatim>"
+normalized: "<normalized question>"
+saved_at: 2026-05-14T18:00:00Z
+files:
+  - path: src/api/middleware/auth.py
+    sha256: 3f5e…   # full 64-hex sha256 of the file's current bytes
+  - path: src/auth/jwt.py
+    sha256: 9a12…
+---
 
-The auth middleware lives in `src/api/middleware/auth.py`, registered in
-`src/api/__init__.py:42`. It validates JWTs via `verify_jwt` from
-`src/auth/jwt.py:12`.
+<answer body — Markdown>
 ```
 
-`ask` (stale):
+Use exactly that frontmatter shape so `ask` can parse it with simple line
+patterns.
+
+## Operation: `ask`
+
+### Step 1 — locate the entry
+
+```bash
+QNORM="<normalized question>"
+QHASH8="<first 8 hex chars of sha256($QNORM)>"
+```
+
+Glob for `<repo-root>/.claude/answers/*-$QHASH8.md`. Exactly one file should
+match (collisions in 8 hex chars are extremely unlikely for the small entry
+counts a single project will have, but if there is more than one match,
+read each one's `normalized:` line and pick the exact match).
+
+If no match: print `answer-cache: miss for "<question>"` and stop. The
+caller should research and call `save`.
+
+### Step 2 — check freshness
+
+Read the entry's frontmatter. For each `files:` row:
+
+- Compute the current sha256 of `path`:
+  - Bash: `sha256sum "<path>" | awk '{print $1}'`
+  - PowerShell: `(Get-FileHash -Algorithm SHA256 "<path>").Hash.ToLower()`
+- If the file no longer exists, count it as stale.
+- If the computed hash differs from the stored hash, count it as stale.
+
+Run these hash commands in **a single parallel Bash batch** — one per file.
+
+### Step 3 — render
+
+#### Fresh (no stale files):
 
 ```
-answer-cache: STALE (1/3 linked files changed: src/api/middleware/auth.py)
+# answer-cache: hit (saved <saved_at>, <age>)
+
+<answer body>
+```
+
+Exit-equivalent: the cached answer is good — use it without further research.
+
+#### Stale (one or more files changed):
+
+```
+answer-cache: STALE (<N>/<total> linked files changed: <path1>, <path2>[, …])
 
 (prior answer follows, treat as outdated:)
+
+<answer body>
+```
+
+Re-research the question, then call `save` to overwrite.
+
+## Operation: `save`
+
+### Step 1 — collect inputs
+
+The caller provides:
+- The original question.
+- The answer body (Markdown).
+- A list of files consulted (paths relative to repo root).
+
+### Step 2 — compute hashes
+
+Run in a parallel Bash batch:
+
+```bash
+sha256sum "<file1>" "<file2>" "<file3>" …
+```
+
+Or per-file with `Get-FileHash` on PowerShell. Record the lowercase hex digest
+of each file.
+
+### Step 3 — write the entry
+
+```bash
+mkdir -p .claude/answers
+```
+
+Write to `.claude/answers/<slug>-<qhash8>.md` (overwrite if exists). Use the
+frontmatter shape shown above. The timestamp is `date -u +"%Y-%m-%dT%H:%M:%SZ"`.
+
+If the question normalizes to the same hash as an existing entry, overwrite
+that entry (intentional behavior — re-research means new answer).
+
+### Step 4 — confirm
+
+```
+answer-cache: saved (<N> files linked: <file1>, <file2>, …)
+```
+
+## Operation: `list`
+
+### Step 1 — enumerate
+
+```bash
+ls -1t <repo-root>/.claude/answers/*.md
+```
+
+(Or Glob `pattern: ".claude/answers/*.md"`, sorted by mtime descending.)
+
+### Step 2 — read each frontmatter
+
+For each file, extract `question`, `saved_at`, and the count of `files:` rows.
+Compute age from `saved_at`.
+
+### Step 3 — print
+
+```
+.claude/answers/  (<count> entries)
+- <question>                  <N> files (saved <age>)
+- <question>                  <N> files (saved <age>)
 …
 ```
 
-`ask` (miss):
+Cap at `limit=N` (default 20).
 
-```
-answer-cache: miss for "where is auth middleware"
+If the directory is empty or doesn't exist, print
+`answer-cache: no entries.` and stop.
+
+## Operation: `forget`
+
+### Step 1 — compute the hash
+
+Same normalization + `qhash8` as `ask`.
+
+### Step 2 — delete
+
+```bash
+rm -f <repo-root>/.claude/answers/*-$QHASH8.md
 ```
 
-`save`:
+### Step 3 — confirm
 
+If a file was deleted, print:
 ```
-answer-cache: saved (3 files linked: src/api/middleware/auth.py, src/auth/jwt.py, src/api/__init__.py)
+answer-cache: forgot "<question>"
 ```
 
-`list`:
+If none matched:
+```
+answer-cache: no entry to forget for "<question>"
+```
 
-```
-.claude/answers/  (4 entries)
-- where is auth middleware                                  3 files (saved 2h ago)
-- how does pagination work                                  2 files (saved 1d ago)
-- where do we configure the database url                    1 file  (saved 3d ago)
-- what jobs run on the worker container                     5 files (saved 1w ago)
-```
+## Age helper
+
+| Seconds since saved | Display |
+|---------------------|---------|
+| < 60 | `Ns ago` |
+| < 3600 | `Nm ago` |
+| < 86400 | `Nh ago` |
+| ≥ 86400 | `Nd ago` |
 
 ## Notes
 
@@ -119,5 +233,7 @@ answer-cache: saved (3 files linked: src/api/middleware/auth.py, src/auth/jwt.py
   be in `.gitignore`.
 - Wrong cached answers are worse than no cache at all — when in doubt about
   a hit, re-verify against the actual files before responding to the user.
-- This v1 has no semantic matching; if you need to vary phrasing, store the
-  same answer under both questions (call `save` twice).
+- v1 matches questions exactly after normalization. If you need to vary
+  phrasing, save twice — once under each form.
+- New files matching the question are NOT detected automatically — staleness
+  is only triggered by content changes to **already-linked** files.

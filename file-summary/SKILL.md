@@ -10,6 +10,10 @@ description: |
 
 # file-summary
 
+A **Markdown-only** skill — no Python, no scripts. You (Claude) hash the
+target file (`sha256sum` or `Get-FileHash`), check the cache, and if it's a
+miss run `grep` against the file to extract exported symbols.
+
 ## When to invoke
 
 Invoke `file-summary` when ANY of these apply:
@@ -26,77 +30,142 @@ Do NOT invoke when:
 - The file is short (< 100 lines) — direct read is cheaper.
 - The file is data (CSV / JSON / images) — use the right tool.
 
-## How to invoke
+## Trade-off vs the old Python parser
 
-```bash
-python <skill-dir>/scripts/summarize.py <path> [--root <repo-root>] [--refresh]
-```
+The Markdown recipe uses `grep` instead of an AST parser. That means:
 
-`<skill-dir>` is typically `~/.claude/skills/file-summary/`.
-
-Examples:
-
-```bash
-python <skill-dir>/scripts/summarize.py src/api/users.py
-python <skill-dir>/scripts/summarize.py ./big_module.py --refresh
-python <skill-dir>/scripts/summarize.py path/to/Component.tsx
-```
-
-## Flags
-
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `path` (positional) | required | File to summarize. |
-| `--root <path>` | nearest `.git` or cwd | Where to put the cache (`<root>/.claude/summaries/`). |
-| `--refresh` | off | Ignore cache, regenerate. |
-| `--max-symbols N` | `40` | Cap on listed symbols per file. |
-| `--no-cache` | off | Compute and print without writing the cache. |
-| `--quiet` | off | Suppress trailing performance hints. |
-
-## What you get back
-
-```markdown
-# src/api/users.py — CRUD endpoints for /users
-
-312 lines • Python • cached: hit (sha 7f3a..)
-
-## Imports
-- fastapi (APIRouter, Depends)
-- sqlalchemy.orm (Session)
-- ..domain.user (User)
-- ..infra.db (get_session)
-
-## Exports
-- def list_users(session: Session) -> list[User]      L24-32
-- def create_user(payload: CreateUserDTO) -> User     L35-58
-- class UserRouter                                    L60-145
-  - .add_user                                         L70-90
-  - .delete_user                                      L92-110
-- USER_SCHEMA: dict                                   L18
-
-## Notable sections
-- L1-22: imports + setup
-- L24-58: simple handlers
-- L60-145: router class
-- L147-312: private helpers (`_*`)
-```
-
-If the file's hash hasn't changed since the last run, the cached summary is
-returned instantly (the `cached: hit` field in the header).
-
-## Languages with structured parsing
-
-- **Python** — `ast`-based: function / class / annotated constants.
-- **TypeScript / JavaScript** (incl. `.tsx`, `.jsx`) — regex over `export …`.
-- **Go** — regex over exported `func` / `type` / `var` / `const`.
-
-For other languages the script falls back to: file size, head (first 30
-lines), tail (last 10 lines), and a list of lines matching `^(def|class|function|interface|fn|public|export)\b`.
+- Multi-line declarations, decorators, and dynamic exports may be missed.
+- Symbol line ranges are start-only (no end line) — the recipe doesn't try
+  to track braces / indentation.
+- For Python, `ast`-based parsing would catch more — but for a navigation
+  overview, the grep recipe is adequate. Fall back to a direct `Read` when
+  you need exact bodies.
 
 ## Cache layout
 
-`<root>/.claude/summaries/<sha256-prefix>-<filename>.md`
+- Directory: `<repo-root>/.claude/summaries/` (find the repo root with
+  `git rev-parse --show-toplevel`; if not in a git repo, use the file's
+  parent directory).
+- One entry per source file: `<sha8>-<basename>.md`
+  - `sha8` = first 8 hex chars of sha256 of the file's bytes.
+  - `basename` = the file's filename (no path).
 
-The cache is keyed by the file's full sha256 (stored inside the markdown
-header) — the prefix is just for human-readable filenames. Stale entries are
-ignored, not deleted; run with `--refresh` to overwrite.
+## How to run
+
+### Step 1 — hash the file
+
+```bash
+sha256sum "<path>" | awk '{print $1}'    # bash
+(Get-FileHash -Algorithm SHA256 "<path>").Hash.ToLower()    # PowerShell
+```
+
+Record the full hex digest. The first 8 chars are `sha8`.
+
+### Step 2 — check the cache
+
+Glob `<cache-dir>/<sha8>-*.md`. If exactly one file matches AND its
+frontmatter contains the same full sha256 → cache hit. Print the file's
+body and stop.
+
+If `refresh=true` was passed, skip the cache check and proceed to compute.
+
+### Step 3 — compute the summary
+
+#### Detect language
+
+By extension (same table as codemap):
+- `.py` → Python
+- `.ts`, `.tsx`, `.mts`, `.cts` → TypeScript
+- `.js`, `.jsx`, `.mjs`, `.cjs` → JavaScript
+- `.go` → Go
+- anything else → generic fallback
+
+#### Gather pieces (single parallel Bash batch)
+
+| Command | Yields |
+|---------|--------|
+| `wc -l "<path>"` | Total line count. |
+| `head -n 30 "<path>"` | First 30 lines (for purpose + imports). |
+| `tail -n 10 "<path>"` | Last 10 lines (for `__all__`, exports block, etc.). |
+| Language-specific symbol greps (see codemap SKILL.md) | Exported top-level symbols. |
+
+For Python imports, grep:
+```
+grep -nE '^(from\s+\S+\s+import|import\s+\S)' "<path>" | head -n 20
+```
+
+For TS/JS imports:
+```
+grep -nE '^import\s' "<path>" | head -n 20
+```
+
+For Go imports:
+```
+grep -nE '^import\s' "<path>"
+```
+Plus the multi-line `import ( … )` block (look for `^import\s*\($` then read
+until matching `^)$`).
+
+#### Extract the file's purpose
+
+Same rule as codemap (first docstring / JSDoc / package comment / humanized
+filename).
+
+#### Cap symbols at `max=N` (default 40).
+
+### Step 4 — render
+
+```markdown
+---
+path: <path>
+sha256: <full digest>
+generated_at: <UTC timestamp>
+language: <python|typescript|javascript|go|other>
+lines: <count>
+---
+
+# <path> — <one-line purpose>
+
+<lines> lines • <Language>
+
+## Imports
+- <module> (<symbols if any>)
+- …
+
+## Exports
+- L<N>  <signature snippet>
+- L<N>  <signature snippet>
+- …
+
+## Head (first 10 lines)
+```
+<head>
+```
+
+## Tail (last 5 lines)
+```
+<tail>
+```
+```
+
+Write it to `<cache-dir>/<sha8>-<basename>.md` (unless `nocache=true`).
+Then print the body (without frontmatter) to the user.
+
+## Supported arguments
+
+| Argument | Default | Purpose |
+|----------|---------|---------|
+| `path` (first positional) | required | File to summarize. |
+| `root=<path>` | nearest `.git` ancestor or file's parent | Cache base. |
+| `refresh=true` | off | Ignore cache, regenerate. |
+| `max=N` | `40` | Cap on listed symbols. |
+| `nocache=true` | off | Compute and print without writing the cache. |
+
+## Notes
+
+- The `.claude/summaries/` folder should be in `.gitignore` (or just
+  `.claude/`).
+- Stale cache entries from earlier versions of a file accumulate over time.
+  Periodic cleanup is fine — but optional, since matching is by full sha256.
+- If the file is binary (sha256 succeeds but `head` returns gibberish),
+  bail out with `file-summary: <path> looks binary — skipping` and stop.

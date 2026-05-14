@@ -10,6 +10,10 @@ description: |
 
 # diff-summary
 
+A **Markdown-only** skill — no Python, no scripts. You (Claude) run
+`git diff --numstat` and `git diff --stat` in parallel, categorize the files
+by path, pick a few representative hunks, and render the report.
+
 ## When to invoke
 
 Invoke `diff-summary` when ANY of these apply:
@@ -24,72 +28,130 @@ Do NOT invoke when:
 - The user asked about a specific file's changes (use `git diff <path>`).
 - You need every line of the diff (use `git diff` and read it).
 
-## How to invoke
+## Choosing the diff ref
 
-Run the script. By default it diffs `HEAD` against the tracked upstream (or
-`origin/main` if no upstream is configured):
+Pick the first that resolves (verify each with `git rev-parse --verify --quiet <ref>`):
+
+1. The user's explicit `against=<ref>` argument.
+2. Tracked upstream: `git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}'`.
+3. `origin/main`.
+4. `origin/master`.
+5. `HEAD~10`.
+
+Or, if the user passed `staged=true`, skip ref selection and use `--cached`
+in the commands below (comparison is staged-vs-HEAD).
+
+## How to run
+
+### Step 1 — gather numbers in parallel
+
+Single Bash batch, all read-only:
+
+| Command | Yields |
+|---------|--------|
+| `git diff --shortstat <RANGE>` | The `N files changed, X insertions(+), Y deletions(-)` line. |
+| `git diff --numstat <RANGE>` | Per-file `<ins>\t<del>\t<path>`. |
+| `git rev-parse --abbrev-ref HEAD` | Current branch (for the title). |
+
+Where `<RANGE>` is `<ref>...HEAD` for ref comparisons, or `--cached` for the
+staged form.
+
+### Step 2 — parse + categorize
+
+For each numstat row:
+
+- If `ins == "-"` or `del == "-"`, the file is binary — record but exclude
+  from the LOC-sum sort.
+- Compute `total = ins + del`.
+- Assign a **category** by path glob, first match wins:
+
+| Glob (case-insensitive) | Category |
+|-------------------------|----------|
+| `*.lock`, `package-lock.json`, `poetry.lock`, `pnpm-lock.yaml`, `yarn.lock`, `Cargo.lock`, `go.sum` | `generated` |
+| `dist/**`, `build/**`, `out/**`, `__pycache__/**`, `node_modules/**` | `generated` |
+| `tests/**`, `test/**`, `*test.go`, `*_test.py`, `*.test.ts`, `*.test.tsx`, `*.spec.ts`, `*.spec.js` | `tests` |
+| `*.md`, `docs/**`, `README*`, `CHANGELOG*`, `LICENSE*` | `docs` |
+| `*.json`, `*.yaml`, `*.yml`, `*.toml`, `*.ini`, `*.cfg`, `Dockerfile*`, `*.env*`, `.github/**`, `.gitlab*` | `config` |
+| anything else | `src` |
+
+Sum `ins` and `del` per category.
+
+### Step 3 — pick sample hunks
+
+Pick the top 3 files by `total` LOC changed **excluding `generated`**. For
+each, run:
 
 ```bash
-python <skill-dir>/scripts/summarize.py [--root <path>] [--against <ref>] [--samples N]
+git diff <RANGE> -- <path>
 ```
 
-`<skill-dir>` is typically `~/.claude/skills/diff-summary/`.
+From each output, take the **first hunk only** (the first block starting
+with `@@`, up to the next `@@` or end of file). Cap each sample at ~30 lines.
+If a sample exceeds 30 lines, truncate and append `… (hunk truncated)`.
 
-Examples:
+Skip the sample step if `samples=0`.
 
-```bash
-python <skill-dir>/scripts/summarize.py                    # HEAD vs upstream
-python <skill-dir>/scripts/summarize.py --against main     # HEAD vs main
-python <skill-dir>/scripts/summarize.py --against HEAD~5
-python <skill-dir>/scripts/summarize.py --staged           # what's staged for commit
-```
-
-## Flags
-
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `--root <path>` | `.` | Repo to inspect. |
-| `--against <ref>` | upstream / origin/main | Ref to diff against. |
-| `--staged` | off | Use staged changes (vs HEAD) instead of a ref comparison. |
-| `--samples N` | `3` | Number of representative hunks to inline. |
-| `--top N` | `10` | Files listed in the top-LOC table. |
-| `--quiet` | off | Suppress trailing performance hints. |
-
-## What you get back
+### Step 4 — render
 
 ```markdown
-# diff-summary — branch feature/x vs origin/main
+# diff-summary — <branch> vs <ref>   (or "staged changes")
 
 ## Stats
-- 14 files changed, 487 insertions(+), 92 deletions(-)
-- Net: +395 lines
+- <shortstat output, verbatim>
+- Net: +<insertions − deletions> lines
 
 ## Categories
-- src:      9 files  (+412 / -78)
-- tests:    3 files  (+62  / -8)
-- config:   1 file   (+8   / -2)
-- docs:     1 file   (+5   / -4)
+- src:       <files> files  (+<ins> / -<del>)
+- tests:     <files> files  (+<ins> / -<del>)
+- config:    <files> files  (+<ins> / -<del>)
+- docs:      <files> files  (+<ins> / -<del>)
+- generated: <files> files  (+<ins> / -<del>)
 
-## Top files (by total LOC changed)
+(Omit any category with zero files.)
+
+## Top files (by total LOC changed, generated excluded)
 | File | + | - |
 |------|---|---|
-| src/api/users.py | 145 | 12 |
-| src/api/auth.py  | 87  | 18 |
-| ...
+| <path> | <ins> | <del> |
+| ... up to `top` rows (default 10) ... |
+
+(If there are more files than the cap, append `… (+N more)` as a final row.)
 
 ## Sample hunks
-### src/api/users.py @@ -42,3 +42,9 @@
-…
+
+### <path1> @@ <hunk header>
+```
+<first hunk, ≤30 lines>
+```
+
+### <path2> @@ <hunk header>
+```
+<first hunk>
+```
+
+(Up to `samples` blocks; default 3.)
 
 ## Path to full diff
-git diff origin/main...HEAD
+git diff <RANGE>
 ```
+
+If the diff is empty (no files changed), print one line:
+`diff-summary: no changes between <RANGE>` and stop.
+
+## Supported arguments
+
+| Argument | Default | Purpose |
+|----------|---------|---------|
+| `root=<path>` | cwd / repo root | Repo to inspect. |
+| `against=<ref>` | upstream / origin/main / origin/master / HEAD~10 | Ref to diff against. |
+| `staged=true` | off | Use `--cached` (staged-vs-HEAD) instead of a ref comparison. |
+| `samples=N` | `3` | Number of sample hunks to include. |
+| `top=N` | `10` | Files listed in the top-LOC table. |
 
 ## Notes
 
-- "category" is heuristic from the file path (`tests/`, `*.test.ts`, `package.json`,
-  `*.md`, etc.). Adjust by reading the table — categories are a hint, not gospel.
-- Generated files (lockfiles, build outputs) are listed in their own row and excluded
-  from sample hunks.
-- For diffs over 1000 changed files the script truncates the file table and reports
-  the totals only.
+- "category" is a heuristic from the file path. Use it as a hint, not gospel.
+- For >1000 changed files, render only the top table and skip sample hunks;
+  point at `git diff <RANGE>` for the rest.
+- The full diff command is always shown at the bottom — run it directly if
+  the user wants more.

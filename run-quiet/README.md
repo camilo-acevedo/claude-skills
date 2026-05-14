@@ -12,9 +12,14 @@ Claude reads the log on demand only when the digest doesn't tell the full story.
 
 > **Estimated savings:** a verbose 1000-line build / test output (~15K tokens) becomes a ~500-token digest. Multi-thousand-line logs become near-constant cost.
 
+## How it works
+
+This skill is **100% Markdown — no Python, no external scripts**. The [`SKILL.md`](SKILL.md) tells Claude how to run the command with stdout+stderr redirected to a log, then how to use `grep`, `head`, `tail`, and `wc` to extract the digest pieces in parallel.
+
 ## Requirements
 
-- Python 3.8+ (standard library only).
+- A POSIX shell or PowerShell (Claude Code's built-in Bash tool ships with both on Windows).
+- That's it — no Python, no Node, no other runtimes.
 
 ## Installation
 
@@ -34,28 +39,22 @@ Inside any Claude Code session:
 
 ```
 /run-quiet pytest -v
+/run-quiet npm run build
+/run-quiet timeout=120s -- terraform plan
 ```
 
-Or run the script directly. The command to wrap goes after `--`:
+These are free-form arguments — Claude reads them as natural language and maps them to the defaults documented in `SKILL.md`. You can also just say "run pytest quietly" or "build the project and don't dump all the output".
 
-```bash
-python ~/.claude/skills/run-quiet/scripts/run.py -- pytest -v
-python ~/.claude/skills/run-quiet/scripts/run.py -- npm run build
-python ~/.claude/skills/run-quiet/scripts/run.py --shell -- "pytest 2>&1 | tee out.txt"
-```
+### Supported arguments (Claude maps these from natural language)
 
-### Flags
-
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `--root <path>` | cwd | Working directory; logs go under `<root>/.claude/run-logs/`. |
-| `--max-lines N` | `30` | Cap on matched-error lines shown. |
-| `--tail N` | `10` | Lines from the end always included. |
-| `--head N` | `0` | Lines from the start always included. |
-| `--shell` | off | Run via the system shell (allows pipes / redirects / env). |
-| `--no-trim` | off | Skip the digest, print the full output. |
-| `--timeout N` | none | Kill the command after N seconds. |
-| `--quiet` | off | Suppress the leading `$ <cmd>` line. |
+| Argument | Default | Purpose |
+|----------|---------|---------|
+| `root=<path>` | cwd / repo root | Working directory; logs go under `<root>/.claude/run-logs/`. |
+| `max=N` | `30` | Cap on matched-error lines shown. |
+| `tail=N` | `10` | Lines from the end always included. |
+| `head=N` | `0` | Lines from the start always included. |
+| `timeout=Ns` | none | Kill the command after N seconds. |
+| `no_trim=true` | off | Skip the digest, print the full output. |
 
 ## Output examples
 
@@ -64,7 +63,7 @@ python ~/.claude/skills/run-quiet/scripts/run.py --shell -- "pytest 2>&1 | tee o
 ```
 $ pytest -v
 exit: 1 (in 4.21s)
-log:  .claude/run-logs/20260504-185500-abc123.log (1842 lines)
+log:  .claude/run-logs/20260514-185500-abc123.log (1842 lines)
 
 errors (3):
   FAILED tests/test_users.py::test_create
@@ -83,14 +82,14 @@ tail (10):
 
 ```
 $ npm run build
-exit: 0 (in 12.30s)  •  log: .claude/run-logs/20260504-185530-def456.log (542 lines)
+exit: 0 (in 12.30s)  •  log: .claude/run-logs/20260514-185530-def456.log (542 lines)
 clean — last line: "✓ Compiled successfully"
 ```
 
 ## Notes
 
 - Logs accumulate under `.claude/run-logs/`. The `.claude/` folder should be in your project's `.gitignore`.
-- Pattern detection is heuristic — false negatives are possible. If the digest looks too clean for a non-zero exit code, fall back to `--no-trim` or read the log directly.
+- Pattern detection is heuristic — false negatives are possible. If the digest looks too clean for a non-zero exit code, fall back to `no_trim=true` or read the log directly.
 - For commands that produce ANSI color codes, the digest strips the escape sequences before scanning. The raw log preserves them.
 
 ## License

@@ -10,85 +10,117 @@ description: |
 
 # log-extract
 
+A **Markdown-only** skill — no Python, no scripts. You (Claude) extract the
+relevant lines from a log file using `grep -nC`, `head`, `tail`, and `wc`
+via the Bash tool, then deduplicate and render.
+
 ## When to invoke
 
 Invoke `log-extract` when ANY of these apply:
 
-- The user points you at a log file and asks "what's wrong?" or "find the error".
+- The user points you at a log file and asks "what's wrong?" or "find the
+  error".
 - You're about to `cat` / `Read` a log file larger than ~500 lines.
-- You need to find specific events in a log without paying for the whole file.
+- You need to find specific events in a log without paying for the whole
+  file.
 
 Do NOT invoke when:
 
 - The log is small (<200 lines) — just read it.
 - The user wants a specific exact section (use `Read` with line offsets).
-- The file is structured data (JSON/CSV) — use the right parser instead.
+- The file is structured data (JSON / CSV) — use the right parser instead.
 
-## How to invoke
+## Defaults
 
-Pass the log path; optionally a regex pattern to override the default error filter:
+| Setting | Default | Override with |
+|---------|---------|---------------|
+| Context lines around each match | 2 | `context=N` |
+| Max hit groups shown | 30 | `max=N` |
+| Head lines | 0 | `head=N` |
+| Tail lines | 5 | `tail=N` |
+| Deduplicate | on | `nodedup=true` |
+| Pattern (extended regex, case-insensitive) | `(error\|errno\|exception\|traceback\|failed\|failure\|panic\|fatal\|warn(ing)?)` | `pattern="<regex>"` |
 
-```bash
-python <skill-dir>/scripts/extract.py <path> [pattern] [flags]
+## How to run
+
+Run these in a **single parallel Bash batch** against the log path `<LOG>`:
+
+| Command | Yields |
+|---------|--------|
+| `wc -l "<LOG>"` | Total line count. |
+| `head -n <head_n> "<LOG>"` | Head lines (skip if `head_n` is 0). |
+| `tail -n <tail_n> "<LOG>"` | Tail lines. |
+| `grep -niE -C <context> "<pattern>" "<LOG>" \| head -n <(max+10)*(2*context+1)>` | Candidate hits with context. |
+
+The `grep -C` output uses `--` as a group separator and lines like
+`123:<line text>` for matched lines, `124-<line text>` for context. Parse
+the output into groups split on `--`.
+
+### Deduplication
+
+For each hit group, build a **normalized signature** by collapsing the
+matched lines only (ignore context lines for the signature):
+
+1. Strip leading timestamps. Common formats to drop:
+   - `YYYY-MM-DD HH:MM:SS(.fff)?`
+   - `[YYYY/MM/DD HH:MM:SS]`
+   - ISO 8601 with timezone
+   - Bare `HH:MM:SS`
+2. Strip ANSI escapes: `s/\x1B\[[0-9;]*[a-zA-Z]//g`
+3. Replace numbers with `N` (matches PIDs, ports, addresses, line numbers).
+4. Lowercase.
+
+Group hits whose normalized signature is identical. Record:
+- `count` (number of occurrences),
+- `first_time` and `last_time` (parsed timestamps if any),
+- one representative hit group (the first occurrence, with its full context).
+
+If `nodedup=true`, skip step 4-5 above and treat every hit as its own group.
+
+Cap the visible groups at `max` (default 30). Sum the rest into a
+`… (+N more hit groups)` line.
+
+## Output format
+
 ```
+log-extract: <path> (<total_lines> lines, <hits> hits → <unique_groups> unique)
 
-`<skill-dir>` is typically `~/.claude/skills/log-extract/`.
-
-Examples:
-
-```bash
-python <skill-dir>/scripts/extract.py /var/log/app.log
-python <skill-dir>/scripts/extract.py /tmp/test-output.log "TimeoutError"
-python <skill-dir>/scripts/extract.py logs/server.log --context 5 --max-hits 50
-```
-
-## Flags
-
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `--context N` | `2` | Lines of context shown around each match. |
-| `--max-hits N` | `30` | Cap on hit groups shown; remaining are counted. |
-| `--no-dedup` | off | Disable stack-trace deduplication. |
-| `--head N` | `0` | Always include the first N lines (helps with banner / config dumps). |
-| `--tail N` | `5` | Always include the last N lines. |
-| `--quiet` | off | Suppress trailing performance hints. |
-
-The default pattern matches: `error`, `errno`, `exception`, `traceback`, `failed`, `failure`, `panic`, `fatal`, `WARN`, `WARNING` (case-insensitive). Pass a custom pattern to override.
-
-## What you get back
-
-```
-log-extract: /var/log/app.log (12480 lines, 184 hits → 12 unique)
-
-head (5):
-  2026-05-04 18:00:01 INFO server starting on :8080
-  ...
+head (<N>):
+  <line>
+  …
 
 hits:
 
-[×3 — first at 14:02:01, last at 14:05:33]
-  2026-05-04 14:02:00 INFO request POST /api/users
-  2026-05-04 14:02:01 ERROR DB connection refused
-  2026-05-04 14:02:01 INFO retrying...
+[×<count> — first at <first_time>, last at <last_time>]
+  <context line>
+  <matched line>
+  <context line>
 
-[×1 at 14:08:11]
-  2026-05-04 14:08:10 INFO request GET /api/health
-  2026-05-04 14:08:11 ERROR FATAL out of memory
-  2026-05-04 14:08:11 INFO shutting down
+[×<count> at <single_time>]
+  <context>
+  <matched>
+  <context>
 
-… (+9 more hit groups)
+… (+<extra> more hit groups)
 
-tail (5):
-  2026-05-04 18:30:00 INFO graceful shutdown complete
-  ...
+tail (<N>):
+  <line>
+  …
 ```
+
+- Omit `head` if `head_n=0` or no lines.
+- Omit `hits:` body entirely if there are no matches; instead print a single
+  line `no matches for pattern "<pattern>"`.
+- If a group has only one occurrence, use `[×1 at <time>]` (or just `[×1]`
+  if no timestamp could be parsed).
 
 ## Notes
 
-- Deduplication: hits whose normalized message (stripped timestamps, stripped
-  numbers in addresses/PIDs/line numbers) is identical are collapsed into one
-  group with a count.
-- The script processes the log in a streaming fashion — files in the GB range
-  are fine as long as Python can `open()` them.
-- For binary files or non-UTF-8 logs the script falls back to `errors='replace'`
-  during read.
+- The default pattern is broad on purpose. Pass a tighter `pattern=` when
+  the user knows what they're looking for (e.g. `pattern="TimeoutError"`).
+- For very large logs (multi-GB), `grep` streams the file — no memory
+  concerns. The Bash tool may truncate stdout, so use the
+  `\| head -n <K>` cap shown above to keep output bounded.
+- For non-UTF-8 logs, add `LC_ALL=C` before `grep` to avoid locale-related
+  slowdowns and decoding errors.
+- This skill never modifies the log file.

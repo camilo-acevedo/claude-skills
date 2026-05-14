@@ -11,9 +11,14 @@ A [Claude Code](https://docs.claude.com/en/docs/claude-code) skill for working w
 
 > **Estimated savings:** a 50K-line log can collapse into a 100-line response.
 
+## How it works
+
+This skill is **100% Markdown — no Python, no external scripts**. The [`SKILL.md`](SKILL.md) tells Claude how to run `grep -nC` against the log to gather candidate hits, then how to normalize and deduplicate them in-memory. Claude uses its built-in Bash tool.
+
 ## Requirements
 
-- Python 3.8+ (standard library only — no third-party packages, no ripgrep).
+- A POSIX shell with `grep`, `head`, `tail`, `wc` (Claude Code's built-in Bash tool on all platforms).
+- That's it — no Python, no Node, no ripgrep.
 
 ## Installation
 
@@ -32,28 +37,24 @@ See the [top-level README](../README.md#installation).
 Inside any Claude Code session:
 
 ```
-/log-extract /path/to/log
-/log-extract /path/to/log "TimeoutError"
+/log-extract /var/log/app.log
+/log-extract /tmp/test-output.log pattern="TimeoutError"
+/log-extract logs/server.log context=5 max=50
 ```
 
-Or run the script directly:
+These are free-form arguments — Claude reads them as natural language.
 
-```bash
-python ~/.claude/skills/log-extract/scripts/extract.py /var/log/app.log
-python ~/.claude/skills/log-extract/scripts/extract.py /tmp/test.log "TimeoutError" --context 5
-```
+### Supported arguments
 
-### Flags
-
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `path` (positional) | required | Log file to read. |
-| `pattern` (positional) | error/warn default | Regex to filter lines. |
-| `--context N` | `2` | Lines of context shown around each match. |
-| `--max-hits N` | `30` | Cap on hit groups shown. |
-| `--no-dedup` | off | Disable stack-trace deduplication. |
-| `--head N` | `0` | Lines from the start always included. |
-| `--tail N` | `5` | Lines from the end always included. |
+| Argument | Default | Purpose |
+|----------|---------|---------|
+| `path` (first positional) | required | Log file to read. |
+| `pattern="<regex>"` | error/warn default | POSIX-extended regex to filter lines (case-insensitive). |
+| `context=N` | `2` | Lines of context shown around each match. |
+| `max=N` | `30` | Cap on hit groups shown. |
+| `nodedup=true` | off | Disable stack-trace deduplication. |
+| `head=N` | `0` | Lines from the start always included. |
+| `tail=N` | `5` | Lines from the end always included. |
 
 The default pattern matches: `error`, `errno`, `exception`, `traceback`, `failed`, `failure`, `panic`, `fatal`, `WARN`, `WARNING` (case-insensitive).
 
@@ -64,27 +65,27 @@ log-extract: /var/log/app.log (12480 lines, 184 hits → 12 unique)
 
 hits:
 
-[×3 — first at line 4521, last at line 6210]
-  2026-05-04 14:02:00 INFO request POST /api/users
-  2026-05-04 14:02:01 ERROR DB connection refused
-  2026-05-04 14:02:01 INFO retrying...
+[×3 — first at 14:02:01, last at 14:05:33]
+  2026-05-14 14:02:00 INFO request POST /api/users
+  2026-05-14 14:02:01 ERROR DB connection refused
+  2026-05-14 14:02:01 INFO retrying...
 
-[×1 at line 8011]
-  2026-05-04 14:08:10 INFO request GET /api/health
-  2026-05-04 14:08:11 ERROR FATAL out of memory
-  2026-05-04 14:08:11 INFO shutting down
+[×1 at 14:08:11]
+  2026-05-14 14:08:10 INFO request GET /api/health
+  2026-05-14 14:08:11 ERROR FATAL out of memory
+  2026-05-14 14:08:11 INFO shutting down
 
 … (+9 more hit groups)
 
 tail (5):
-  2026-05-04 18:30:00 INFO graceful shutdown complete
+  2026-05-14 18:30:00 INFO graceful shutdown complete
 ```
 
 ## How dedup works
 
-A hit's center line is normalized (timestamps stripped, hex addresses replaced, large numeric IDs collapsed) and used as the dedup key. Two hits whose normalized centers match are merged into one group with a `×N` count and the first/last line numbers.
+A hit's matched line is normalized (timestamps stripped, ANSI escapes stripped, numbers collapsed to `N`) and used as the dedup key. Two hits whose normalized lines match are merged into one group with a `×N` count and the first/last seen times.
 
-Pass `--no-dedup` to see every hit.
+Pass `nodedup=true` to see every hit.
 
 ## License
 
