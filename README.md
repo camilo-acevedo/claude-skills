@@ -2,27 +2,32 @@
 
 A collection of [Claude Code](https://docs.claude.com/en/docs/claude-code) skills focused on **saving tokens** during real engineering work — by preventing Claude from re-exploring the same codebase, re-reading the same files, and re-running the same verbose commands every conversation.
 
+**All skills are now 100% Markdown — no Python, no Node, no extra runtimes.** Each `SKILL.md` is a recipe Claude follows using its built-in Bash / Read / Write / Grep / Glob tools.
+
 ## Skills in this repo
 
-| Skill | Status | What it does |
-|-------|--------|--------------|
-| [codemap](codemap/) | ✅ available | One `CODEMAP.md` (tree + per-file purpose + exported symbols) so Claude reads one map instead of doing 20+ Glob/Grep/Read calls. |
-| [run-quiet](run-quiet/) | ✅ available | Wraps verbose commands (`pytest`, `npm run build`, `terraform plan`); returns exit code + relevant lines, full output saved to a log. |
-| [git-digest](git-digest/) | ✅ available | Bundles `git status` + `log` + `diff --stat` + `branch -vv` + `stash list` into a single digested report. 4–5 calls collapse into 1. |
-| [test-failures-only](test-failures-only/) | ✅ available | Runs the test suite and returns only failures with condensed tracebacks; if all green, returns one line. |
-| [file-summary](file-summary/) | ✅ available | Per-file summary cache under `.claude/summaries/`. Repeated reads of large files cost ~200 tokens instead of 2000+. |
-| [diff-summary](diff-summary/) | ✅ available | Categorized summary of large diffs for PR review (top files, categories, sample hunks + path to full diff). |
-| [log-extract](log-extract/) | ✅ available | Extracts errors + N lines of context from large log files; deduplicates repeated stack traces. |
-| [api-contract](api-contract/) | ✅ available | Distills OpenAPI 3.x specs into a compact `CONTRACT.md` (endpoints, methods, key types, auth). |
-| [session-handoff](session-handoff/) | ✅ available | `save` / `list` / `resume` subcommands to persist task state across sessions in `.claude/handoff/`. |
-| [answer-cache](answer-cache/) | ✅ available | Caches Q&A about the codebase under `.claude/answers/` with file-based invalidation. |
+| Skill | What it does |
+|-------|--------------|
+| [codemap](codemap/) | One `CODEMAP.md` (tree + per-file purpose + exported symbols) so Claude reads one map instead of doing 20+ Glob/Grep/Read calls. |
+| [run-quiet](run-quiet/) | Wraps verbose commands (`pytest`, `npm run build`, `terraform plan`); returns exit code + relevant lines, full output saved to a log. |
+| [git-digest](git-digest/) | Bundles `git status` + `log` + `diff --stat` + `branch -vv` + `stash list` into a single digested report. 4–5 calls collapse into 1. |
+| [test-failures-only](test-failures-only/) | Runs the test suite and returns only failures with condensed tracebacks; if all green, returns one line. |
+| [file-summary](file-summary/) | Per-file summary cache under `.claude/summaries/`. Repeated reads of large files cost ~200 tokens instead of 2000+. |
+| [diff-summary](diff-summary/) | Categorized summary of large diffs for PR review (top files, categories, sample hunks + path to full diff). |
+| [log-extract](log-extract/) | Extracts errors + N lines of context from large log files; deduplicates repeated stack traces. |
+| [api-contract](api-contract/) | Distills OpenAPI 3.x specs into a compact `CONTRACT.md` (endpoints, methods, key types, auth). |
+| [session-handoff](session-handoff/) | `save` / `list` / `resume` to persist task state across sessions in `.claude/handoff/`. |
+| [answer-cache](answer-cache/) | Caches Q&A about the codebase under `.claude/answers/` with file-based invalidation. |
 
-Each skill is self-contained inside its own folder (`SKILL.md` + `scripts/` + a folder-level `README.md`).
+Each skill is self-contained inside its own folder (`SKILL.md` + a folder-level `README.md`).
 
 ## Requirements
 
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) installed.
-- Python 3.8 or later for skills that use Python scripts (`codemap`, `file-summary`). No third-party packages required.
+- `git` available on `PATH` (used by `git-digest`, `diff-summary`, `codemap`, `session-handoff`).
+- A POSIX shell with `grep`, `sed`, `head`, `tail`, `wc`, `sha256sum` — OR PowerShell with `Get-FileHash`. Claude Code's built-in Bash tool ships with both on Windows.
+
+No Python, Node, or other language runtimes are required.
 
 ## Installation
 
@@ -72,7 +77,7 @@ Open a **new** Claude Code session (skills are discovered at session start, so a
 /codemap
 ```
 
-Claude should run the generator and write `CODEMAP.md` to your repo root.
+Claude should enumerate the repo and write `CODEMAP.md` to your repo root.
 
 ### Updating after a `git pull`
 
@@ -129,7 +134,7 @@ Remove-Item -Recurse -Force `
 
 ## Contributing
 
-Each skill lives in its own folder and ships with a `SKILL.md` (Claude-facing instructions) and a `README.md` (human-facing docs). Open a PR or an issue.
+Each skill lives in its own folder and ships with a `SKILL.md` (Claude-facing recipe) and a `README.md` (human-facing docs). Open a PR or an issue.
 
 ## License
 

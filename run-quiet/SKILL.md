@@ -10,12 +10,16 @@ description: |
 
 # run-quiet
 
+A **Markdown-only** skill — no Python, no scripts. You (Claude) run the
+verbose command directly via the Bash tool with output redirected to a log
+file, then use `grep`/`head`/`tail` against the log to build a short digest.
+
 ## When to invoke
 
 Invoke `run-quiet` when ANY of these apply:
 
 - The command's output is likely to be over ~200 lines (build tools, test
-  suites, terraform plan, infrastructure scans, package install logs, etc.).
+  suites, `terraform plan`, infrastructure scans, package install logs, etc.).
 - You only need to know whether the command succeeded and, if not, why.
 - The command is verbose by design (`-v`, `--verbose`) but you want a digest.
 
@@ -25,81 +29,136 @@ Do NOT invoke when:
 - The output IS the answer the user wants (e.g. `cat`, `git show`, `jq`).
 - The command is short and you need every line (e.g. `git status --porcelain`).
 
-## How to invoke
+## Defaults
 
-The script wraps a single command. Pass the command as a list of arguments
-after `--`:
+| Setting | Default | Override with |
+|---------|---------|---------------|
+| Log directory | `<repo-root>/.claude/run-logs/` | `--root <path>` argument |
+| Max error lines shown | 30 | `max=N` argument |
+| Tail lines shown | 10 | `tail=N` argument |
+| Head lines shown | 0 | `head=N` argument |
+| Timeout | none | `timeout=Ns` argument |
+
+If you can't find a repo root (`.git` not in any parent), use the current
+working directory.
+
+## How to run
+
+### Step 1 — pick a log path
 
 ```bash
-python <skill-dir>/scripts/run.py [flags] -- <command> [args...]
+mkdir -p .claude/run-logs
+LOG=".claude/run-logs/$(date -u +%Y%m%d-%H%M%S)-$$.log"
 ```
 
-`<skill-dir>` is typically `~/.claude/skills/run-quiet/`.
+### Step 2 — run the command, redirect everything to the log, capture exit code
 
-Examples:
+Use this single Bash call (works in Git Bash on Windows and any POSIX shell):
 
 ```bash
-python <skill-dir>/scripts/run.py -- pytest -v
-python <skill-dir>/scripts/run.py -- npm run build
-python <skill-dir>/scripts/run.py --shell -- "pytest -v 2>&1 | tee out.txt"
+{ <COMMAND> ; echo "__RUN_QUIET_EXIT__=$?"; } >"$LOG" 2>&1
 ```
 
-## Flags
+Or, if you prefer the value in a variable (still one Bash call):
 
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `--root <path>` | cwd | Directory to run in; logs are written under `<root>/.claude/run-logs/`. |
-| `--max-lines N` | `30` | Cap on matched-error lines shown in the digest. |
-| `--tail N` | `10` | Lines from the end of the output to always include. |
-| `--head N` | `0` | Lines from the start to always include (helpful for build banners). |
-| `--shell` | off | Run via the system shell (allows pipes, redirection, env interpolation). |
-| `--no-trim` | off | Skip the digest; print the full output (useful when the digest hides what you need). |
-| `--timeout N` | none | Kill the command after N seconds. |
-| `--quiet` | off | Suppress the leading `$ <cmd>` line. |
-
-## What you get back
-
-A short report on stdout. Example for a failing pytest run:
-
-```
-$ pytest -v
-exit: 1 (in 4.21s)
-log:  .claude/run-logs/abc123.log (1842 lines)
-
-errors (3):
-  tests/test_users.py::test_create FAILED
-    AssertionError: expected 200, got 500
-  tests/test_users.py::test_update FAILED
-    KeyError: 'user_id'
-  tests/test_admin.py::test_delete FAILED
-    TimeoutError after 30s
-
-tail (10):
-  ============================== short test summary info ==============================
-  FAILED tests/test_users.py::test_create
-  FAILED tests/test_users.py::test_update
-  FAILED tests/test_admin.py::test_delete
-  ============================== 3 failed, 174 passed in 4.21s ==============================
+```bash
+<COMMAND> >"$LOG" 2>&1; echo "exit=$?"
 ```
 
-If the command exits 0 with no errors detected, the digest collapses:
+For PowerShell users:
+
+```powershell
+& <COMMAND> *>&1 | Tee-Object -FilePath $LOG | Out-Null
+$exit = $LASTEXITCODE
+```
+
+Read the exit code from the output. If the user passed `timeout=Ns`, wrap
+the command with `timeout Ns <COMMAND>` (Unix) or use
+`Start-Process -Wait -TimeoutSec N` (PowerShell). On timeout, append a
+literal line `run-quiet: killed after Ns timeout` to the log.
+
+### Step 3 — gather the digest pieces in parallel
+
+Run these in a single parallel Bash batch against the log file:
+
+| Command | Yields |
+|---------|--------|
+| `wc -l "$LOG"` | Total line count. |
+| `head -n <head_n> "$LOG"` | Head lines (skip if `head_n` is 0). |
+| `tail -n <tail_n> "$LOG"` | Tail lines. |
+| `grep -nE '<error-regex>' "$LOG" \| head -n <max+20>` | Candidate error/warning lines. |
+
+### Error regex
+
+Use this extended-regex (POSIX ERE) that matches both generic patterns and
+framework-specific signals:
 
 ```
-$ npm run build
-exit: 0 (in 12.30s)  •  log: .claude/run-logs/def456.log (542 lines)
-clean — last line: "✓ Compiled successfully"
+\b(error|errno|exception|traceback|failed|failure|panic|fatal)\b|\bWARN(ING)?\b|^FAILED |^ERROR |^FAIL |^---[[:space:]]+FAIL:|^[[:space:]]*●[[:space:]]|^E[[:space:]]{2}
 ```
 
-If you need the full output, read the log file at the path shown.
+It's case-insensitive — pass `-i` to `grep`.
+
+Strip ANSI escape codes from the error lines before printing:
+
+```bash
+sed 's/\x1B\[[0-9;]*[a-zA-Z]//g'
+```
+
+Drop any candidate line that also appears in the head/tail slices (to avoid
+duplication). Cap the list at `max` (default 30); if there are more, append
+`… (+N more — see log)`.
+
+## Output format
+
+### Clean run (exit 0 and no error lines matched)
+
+```
+$ <command>
+exit: 0 (in <secs>s)  •  log: .claude/run-logs/<file> (<N> lines)
+clean — last line: "<last non-empty line of log>"
+```
+
+### Failing run (or non-zero exit, or matched errors)
+
+```
+$ <command>
+exit: <code> (in <secs>s)
+log:  .claude/run-logs/<file> (<N> lines)
+
+head (<N>):
+  <line>
+  …
+
+errors (<count>[, truncated]):
+  <line>
+  <line>
+  … (+<extra> more — see log)
+
+tail (<N>):
+  <line>
+  …
+```
+
+Omit the `head` section if `head_n` is 0 or empty.
+Omit the `errors` section if no errors matched.
+
+## When to fall back to no-trim mode
+
+If the user passes `no_trim=true` (or the digest looks suspiciously empty for
+a non-zero exit), print the entire log contents instead of the digest,
+followed by the standard `exit: ... log: ...` line.
 
 ## Notes
 
-- Logs accumulate in `.claude/run-logs/`. Add `.claude/run-logs/` to your
-  project's `.gitignore` (or just `.claude/`).
-- The digest looks for generic patterns (error / failed / panic / traceback)
-  plus a few framework-specific ones (pytest `FAILED`, jest `FAIL`, Go
-  `--- FAIL:`). False negatives are possible — if the digest looks too
-  clean for a failing exit code, fall back to `--no-trim` or read the log.
-- On Windows, prefer the explicit argument form (without `--shell`) when
-  possible. With `--shell`, the platform default shell is used (`cmd` on
-  Windows, `/bin/sh` on Unix).
+- Logs accumulate in `.claude/run-logs/`. Add that directory (or just
+  `.claude/`) to the project's `.gitignore`.
+- The error regex catches generic patterns + a few framework-specific ones
+  (pytest `FAILED`, jest `FAIL` / `●`, Go `--- FAIL:`). False negatives are
+  possible — if the digest looks too clean for a failing exit code, re-run
+  with `no_trim=true` or `grep` the log yourself.
+- On Windows + PowerShell-only environments, prefer the PowerShell snippet
+  above. On Windows + Git Bash (Claude Code's default), the Bash recipe
+  works as-is.
+- The full log path is shown — if you need more context, read the log with
+  the Read tool.
